@@ -1,7 +1,7 @@
 {
   "name": "sticky-todo",
   "productName": "StickyTodo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Windows 桌面悬浮待办便签",
   "main": "src/main/main.js",
   "author": "qijian",
@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "electron .",
     "icons": "node scripts/gen-icons.js",
-    "test": "node test/store.test.js && node test/renderer.test.js",
+    "test": "node test/store.test.js && node test/recurrence.test.js && node test/renderer.test.js",
     "pack": "electron-builder --win --dir",
     "build": "npm run icons && electron-builder --win"
   },
@@ -17,9 +17,10 @@
     "appId": "com.qijian.stickytodo",
     "productName": "StickyTodo",
     "directories": {
-      "output": "release",
+      "output": "dist",
       "buildResources": "build"
     },
+    "afterPack": "scripts/afterPack.js",
     "files": [
       "src/**/*",
       "assets/**/*",

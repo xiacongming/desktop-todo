@@ -35,11 +35,14 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('settings:changed', (_e, settings) => cb(settings));
   },
 
-  onRemindersMarked: (cb) => {
-    ipcRenderer.on('reminders:marked', (_e, payload) => cb(payload));
+  onRemindersFired: (cb) => {
+    ipcRenderer.on('reminders:fired', (_e, payload) => cb(payload));
   },
 
   onRemindersPulse: (cb) => {
     ipcRenderer.on('reminders:pulse', (_e, payload) => cb(payload));
-  }
+  },
+
+  /** 用户点掉横幅后告诉主进程停止托盘闪烁 */
+  ackReminders: () => ipcRenderer.send('reminders:ack')
 });

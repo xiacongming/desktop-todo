@@ -9,12 +9,14 @@ const {
   nativeImage,
   globalShortcut,
   Notification,
-  shell
+  shell,
+  powerMonitor
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
 const { Store, SKINS } = require('./store');
+const { nextOccurrence, describeRepeat } = require('./recurrence');
 const { clampBounds } = require('./windowState');
 
 const ICON_DIR = path.join(__dirname, '../../assets');
@@ -105,11 +107,6 @@ function createWindow() {
   win.on('resized', persistBounds);
   win.on('show', refreshTrayMenu);
   win.on('hide', refreshTrayMenu);
-  win.on('focus', () => {
-    try {
-      win.flashFrame(false);
-    } catch (_) {}
-  });
 }
 
 function toggleWindow() {
@@ -129,6 +126,58 @@ function trayImage() {
   const p = path.join(ICON_DIR, 'tray.png');
   if (fs.existsSync(p)) return nativeImage.createFromPath(p);
   return nativeImage.createEmpty();
+}
+
+function trayAlertImage() {
+  const p = path.join(ICON_DIR, 'tray-alert.png');
+  if (fs.existsSync(p)) return nativeImage.createFromPath(p);
+  return trayImage();
+}
+
+/**
+ * 有提醒到点时让托盘图标闪起来。
+ *
+ * 为什么不用 flashFrame：窗口是 skipTaskbar，不占任务栏位置，闪任务栏按钮等于没闪。
+ * 托盘图标是这个小工具唯一常驻的视觉入口，所以让它动。
+ * 最多闪 40 秒就自动停——用户不在电脑前时一直闪只是耗电，通知已经进通知中心了。
+ */
+const ALERT_FLASH_TICKS = 56;
+let alertFlashTimer = null;
+let alertFlashStep = 0;
+
+function startTrayAlert() {
+  if (!tray || alertFlashTimer) return;
+  alertFlashStep = 0;
+  try {
+    tray.setImage(trayAlertImage());
+  } catch (_) {
+    return;
+  }
+  alertFlashTimer = setInterval(() => {
+    alertFlashStep += 1;
+    if (alertFlashStep >= ALERT_FLASH_TICKS) {
+      stopTrayAlert();
+      return;
+    }
+    try {
+      tray.setImage(alertFlashStep % 2 ? trayImage() : trayAlertImage());
+    } catch (_) {
+      stopTrayAlert();
+    }
+  }, 700);
+}
+
+function stopTrayAlert() {
+  if (alertFlashTimer) {
+    clearInterval(alertFlashTimer);
+    alertFlashTimer = null;
+  }
+  alertFlashStep = 0;
+  if (tray) {
+    try {
+      tray.setImage(trayImage());
+    } catch (_) {}
+  }
 }
 
 function buildTrayMenu() {
@@ -262,14 +311,8 @@ function registerHotkey(enabled) {
 /* ---------------- 提醒 ---------------- */
 
 function notify(title, body) {
-  // 开发模式下 Windows 通知常因缺少已注册的 AUMID 而不弹，
-  // 所以同时闪一下窗口边框兜底，保证提醒一定被看见。
-  if (win && win.isVisible()) {
-    try {
-      win.flashFrame(true);
-    } catch (_) {}
-  }
-
+  // 这里原本调了 win.flashFrame(true)，但窗口是 skipTaskbar，任务栏上没有按钮可闪，
+  // 属于写了也不生效的死代码。真正的「视觉兜底」交给托盘图标闪烁 + 窗口内横幅。
   if (!Notification.isSupported()) return;
   const n = new Notification({
     title,
@@ -286,29 +329,11 @@ function notify(title, body) {
   n.show();
 }
 
-function markReminded(ids) {
-  const st = store.get();
-  const now = new Date().toISOString();
-  let changed = false;
-  st.todos.forEach((t) => {
-    if (ids.includes(t.id)) {
-      t.remindedAt = now;
-      changed = true;
-    }
-  });
-  if (changed) {
-    store.save(st);
-    if (win) win.webContents.send('reminders:marked', { ids, at: now });
-  }
-}
-
 function checkReminders() {
   const st = store.get();
-  const now = Date.now();
+  const nowMs = Date.now();
 
-  const due = st.todos.filter(
-    (t) => !t.done && t.dueAt && !t.remindedAt && new Date(t.dueAt).getTime() <= now
-  );
+  const due = st.todos.filter((t) => needsReminder(t, nowMs));
   if (!due.length) {
     firstReminderPass = false;
     return;
@@ -323,16 +348,81 @@ function checkReminders() {
     );
   } else {
     due.forEach((t) => {
-      notify('待办到期：' + t.text, t.dueAt ? formatDue(t.dueAt) : '');
+      const when = formatDue(t.dueAt);
+      if (t.repeat) {
+        notify('提醒：' + t.text, `${describeRepeat(t.repeat, t.dueAt) || when}`);
+      } else {
+        notify('待办到期：' + t.text, when);
+      }
     });
   }
 
   firstReminderPass = false;
-  markReminded(due.map((t) => t.id));
 
-  if (win && win.isVisible()) {
-    win.webContents.send('reminders:pulse', { ids: due.map((t) => t.id) });
+  // 推进到下一次：重复项把 dueAt 前移到未来，单次项打 remindedAt 标记。
+  // 这一步必须在 notify 之后做，否则文案里就取不到「原定触发时间」了。
+  const at = new Date(nowMs).toISOString();
+  const items = [];
+  let skippedTotal = 0;
+
+  due.forEach((t) => {
+    t.firedAt = at;
+    let skipped = 0;
+
+    if (t.repeat) {
+      const next = nextOccurrence(t.dueAt, t.repeat, new Date(nowMs));
+      if (next) {
+        t.dueAt = next.at;
+        skipped = next.skipped;
+      } else {
+        // 规则算不出下一次（脏数据），退化为单次提醒，别让它变成僵尸闹钟
+        t.repeat = null;
+        t.remindedAt = at;
+      }
+    } else {
+      t.remindedAt = at;
+    }
+
+    skippedTotal += skipped;
+    items.push({
+      id: t.id,
+      dueAt: t.dueAt,
+      repeat: t.repeat,
+      remindedAt: t.remindedAt,
+      firedAt: t.firedAt,
+      skipped
+    });
+  });
+
+  store.save(st);
+
+  if (skippedTotal > 0) {
+    notify('已跳过多余提醒', `应用没运行时错过了 ${skippedTotal} 次重复提醒，之后按原计划继续。`);
   }
+
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('reminders:fired', { items, at });
+    if (win.isVisible()) {
+      win.webContents.send('reminders:pulse', { ids: due.map((t) => t.id) });
+    }
+  }
+
+  // 视觉兜底：托盘图标闪起来，配合窗口内横幅，直到用户点「知道了」
+  startTrayAlert();
+}
+
+/**
+ * 是否需要提醒。
+ * - 重复项：dueAt 触发后立刻前移，所以「dueAt <= now」本身就是幂等条件，
+ *   不能再叠加 remindedAt 判断（那会让重复提醒只响一次）。
+ * - 单次项：保持 v1 行为，提醒过就不再响，直到用户改了时间。
+ */
+function needsReminder(t, nowMs) {
+  if (t.done || !t.dueAt) return false;
+  const at = new Date(t.dueAt).getTime();
+  if (isNaN(at) || at > nowMs) return false;
+  if (t.repeat) return true;
+  return !t.remindedAt;
 }
 
 function formatDue(iso) {
@@ -351,6 +441,7 @@ function setupIpc() {
     autostart: isAutoLaunchEnabled(),
     hotkey: HOTKEY,
     packaged: app.isPackaged,
+    version: app.getVersion(),
     dataDir: app.getPath('userData')
   }));
 
@@ -361,6 +452,21 @@ function setupIpc() {
     if (next && next.settings && prev.settings) {
       next.settings.window = prev.settings.window;
     }
+
+    // 重复提醒的 dueAt 由主进程单方面向前推进。渲染进程手里可能还握着推进前的旧值，
+    // 若直接落盘会把提醒拨回过去，下一轮轮询就会重复弹同一条通知。
+    if (next && Array.isArray(next.todos)) {
+      const prevMap = new Map(prev.todos.map((t) => [t.id, t]));
+      next.todos.forEach((t) => {
+        const p = prevMap.get(t.id);
+        if (!p || !p.repeat || !p.dueAt || !t.dueAt) return;
+        if (new Date(t.dueAt).getTime() < new Date(p.dueAt).getTime()) {
+          t.dueAt = p.dueAt;
+          if (!t.repeat) t.repeat = p.repeat;
+        }
+      });
+    }
+
     store.save(next);
     // 新增/修改截止时间后尽早检查一次，不必等下一个轮询周期
     setTimeout(checkReminders, 300);
@@ -379,6 +485,11 @@ function setupIpc() {
   ipcMain.on('app:quit', () => {
     app.__quitting = true;
     app.quit();
+  });
+
+  // 用户在窗口里点掉横幅后，停止托盘闪烁
+  ipcMain.on('reminders:ack', () => {
+    stopTrayAlert();
   });
 
   ipcMain.handle('app:autostart', (_e, on) => {
@@ -416,16 +527,64 @@ function setupIpc() {
  */
 async function captureSkins(dir) {
   const { SKINS: list } = require('./store');
+  const shot = async (name) => {
+    await new Promise((r) => setTimeout(r, 520));
+    const img = await win.capturePage();
+    fs.writeFileSync(path.join(dir, `${name}.png`), img.toPNG());
+  };
+
   try {
     fs.mkdirSync(dir, { recursive: true });
     await new Promise((r) => setTimeout(r, 1200));
     for (const skin of list) {
       win.webContents.send('skin:set', skin);
-      await new Promise((r) => setTimeout(r, 520));
-      const img = await win.capturePage();
-      fs.writeFileSync(path.join(dir, `skin-${skin}.png`), img.toPNG());
-      console.log('shot', skin, img.getSize());
+      await shot(`skin-${skin}`);
     }
+
+    // 交互态：搜索条、重复提醒浮层。这两块只有真的打开才看得到问题。
+    win.webContents.send('skin:set', 'paper');
+    await new Promise((r) => setTimeout(r, 400));
+
+    await win.webContents.executeJavaScript(`
+      (() => {
+        document.getElementById('btnSearch').click();
+        const i = document.getElementById('searchInput');
+        i.value = '账号';
+        i.dispatchEvent(new Event('input', { bubbles: true }));
+      })();
+    `);
+    await shot('state-search');
+
+    await win.webContents.executeJavaScript(`
+      (() => {
+        closeSearch();
+        const btn = document.querySelector('.row [data-act="due"]');
+        if (btn) btn.click();
+        const wk = document.querySelector('[data-repeat="weekly"]');
+        if (wk) wk.click();
+      })();
+    `);
+    await shot('state-repeat');
+
+    // 到点横幅：直接调渲染层的 showAlarm，和真实触发走同一条路径
+    await win.webContents.executeJavaScript(`
+      (() => {
+        // 关掉提醒浮层
+        if (typeof closePops === 'function') closePops();
+        const list = (typeof state !== 'undefined' && state.todos) || [];
+        const t = list.find((x) => !x.done);
+        if (t && typeof showAlarm === 'function') {
+          showAlarm([{ id: t.id, dueAt: new Date().toISOString() }]);
+        }
+        render();
+      })();
+    `);
+    await shot('state-alarm');
+
+    // 深色皮肤下再验一次横幅对比度
+    win.webContents.send('skin:set', 'noir');
+    await new Promise((r) => setTimeout(r, 520));
+    await shot('state-alarm-dark');
   } catch (err) {
     console.error('capture failed:', err.message);
   }
@@ -453,6 +612,11 @@ app.whenReady().then(() => {
   setTimeout(checkReminders, 2500);
   reminderTimer = setInterval(checkReminders, 20000);
 
+  // 睡眠期间 setInterval 不累计，唤醒后立刻补一轮，不必等下一个 20 秒
+  powerMonitor.on('resume', () => {
+    setTimeout(checkReminders, 1200);
+  });
+
   app.on('activate', () => {
     if (!win) createWindow();
     else {
@@ -473,4 +637,5 @@ app.on('before-quit', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (reminderTimer) clearInterval(reminderTimer);
+  if (alertFlashTimer) clearInterval(alertFlashTimer);
 });

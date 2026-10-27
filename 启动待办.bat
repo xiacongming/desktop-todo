@@ -2,16 +2,26 @@
 cd /d "%~dp0"
 set "ELECTRON_RUN_AS_NODE="
 set "NODE_OPTIONS="
-if exist "release-out\win-unpacked\StickyTodo.exe" goto packagedout
-if exist "release\win-unpacked\StickyTodo.exe" goto packaged
+if exist "dist\win-unpacked\StickyTodo.exe" goto pdist
+if exist "release-1.1.0\win-unpacked\StickyTodo.exe" goto p110
+if exist "release-out\win-unpacked\StickyTodo.exe" goto pout
+if exist "release\win-unpacked\StickyTodo.exe" goto pdef
 if exist "node_modules\electron\dist\electron.exe" goto dev
 goto norun
 
-:packagedout
+:pdist
+start "" "dist\win-unpacked\StickyTodo.exe"
+exit /b 0
+
+:p110
+start "" "release-1.1.0\win-unpacked\StickyTodo.exe"
+exit /b 0
+
+:pout
 start "" "release-out\win-unpacked\StickyTodo.exe"
 exit /b 0
 
-:packaged
+:pdef
 start "" "release\win-unpacked\StickyTodo.exe"
 exit /b 0
 

@@ -4,6 +4,7 @@ node_modules/
 # 打包产物
 release/
 release-out/
+release-*/
 dist/
 out/
 *.zip
@@ -17,3 +18,4 @@ Thumbs.db
 # 临时文件
 *.log
 shot.png
+.relbody.json

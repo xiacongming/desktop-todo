@@ -4,14 +4,19 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 
+const { normalizeRepeat } = require('./recurrence');
+
+const DATA_VERSION = 2;
+
 const DEFAULT_STATE = () => ({
-  version: 1,
+  version: DATA_VERSION,
   settings: {
     alwaysOnTop: true,
     skin: 'paper',
     autoLaunch: false,
     globalHotkey: true,
     collapseDone: true,
+    composerHeight: null,
     window: { x: null, y: null, width: 340, height: 470 }
   },
   todos: []
@@ -29,14 +34,28 @@ function normalizeTodo(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const text = typeof raw.text === 'string' ? raw.text : '';
   if (!text.trim()) return null;
+
+  const dueAt = typeof raw.dueAt === 'string' && !isNaN(new Date(raw.dueAt).getTime())
+    ? raw.dueAt
+    : null;
+
+  // v1 只有 remindedAt（单次提醒，置位后永不再提醒）。
+  // v2 引入 firedAt + repeat：repeat 靠 dueAt 前移实现幂等，firedAt 仅作记录。
+  let firedAt = typeof raw.firedAt === 'string' ? raw.firedAt : null;
+  const remindedAt = typeof raw.remindedAt === 'string' ? raw.remindedAt : null;
+  if (!firedAt && remindedAt) firedAt = remindedAt;
+
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : uid(),
-    text: text.slice(0, 500),
+    text: text.trim().slice(0, 500),
     done: !!raw.done,
     pinned: !!raw.pinned && !raw.done,
     order: Number.isFinite(raw.order) ? raw.order : 1024,
-    dueAt: typeof raw.dueAt === 'string' ? raw.dueAt : null,
-    remindedAt: typeof raw.remindedAt === 'string' ? raw.remindedAt : null,
+    dueAt,
+    // 没有截止时间的重复规则没有意义，直接丢弃，避免出现「永远不触发」的僵尸闹钟
+    repeat: dueAt ? normalizeRepeat(raw.repeat) : null,
+    remindedAt,
+    firedAt,
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString(),
     completedAt: typeof raw.completedAt === 'string' ? raw.completedAt : null
   };
@@ -61,11 +80,18 @@ function normalizeState(raw) {
     height: Number.isFinite(w.height) ? Math.max(260, Math.min(1200, w.height)) : 470
   };
 
+  // 输入框被手动拖高过才有值，null = 跟随内容自动增高
+  settings.composerHeight = Number.isFinite(settings.composerHeight)
+    ? Math.max(28, Math.min(600, settings.composerHeight))
+    : null;
+
   const todos = Array.isArray(raw.todos)
     ? raw.todos.map(normalizeTodo).filter(Boolean)
     : [];
 
-  return { version: 1, settings, todos };
+  // v1 → v2 迁移：结构原地升级，字段已经在 normalizeTodo 里补齐，
+  // 旧版本回退读 v2 文件也不会崩（多出的 repeat/firedAt 会被它忽略）。
+  return { version: DATA_VERSION, settings, todos };
 }
 
 class Store {
@@ -146,4 +172,12 @@ class Store {
   }
 }
 
-module.exports = { Store, normalizeState, normalizeTodo, DEFAULT_STATE, SKINS, uid };
+module.exports = {
+  Store,
+  normalizeState,
+  normalizeTodo,
+  DEFAULT_STATE,
+  SKINS,
+  uid,
+  DATA_VERSION
+};

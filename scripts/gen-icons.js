@@ -80,8 +80,7 @@ function segDist(px, py, x1, y1, x2, y2) {
  * @param {number} size
  * @param {boolean} withBg 是否带底色（托盘图标需要，纯透明底在对勾上看不清）
  */
-function drawIcon(size, thicknessRatio = 0.115) {
-  const S = 3; // 每像素 3×3 超采样
+function drawIcon(size, thicknessRatio = 0.115) {  const S = 3; // 每像素 3×3 超采样
   const buf = Buffer.alloc(size * size * 4);
 
   const r = size * 0.235;
@@ -145,6 +144,74 @@ function drawIcon(size, thicknessRatio = 0.115) {
   return buf;
 }
 
+/**
+ * 报警托盘图标：同样的圆角方块，但底色换成红，中间画感叹号。
+ * 用于「有提醒到点」时与正常图标交替闪烁——窗口 skipTaskbar，
+ * 闪任务栏按钮无效，只能靠托盘图标本身动起来。
+ */
+function drawAlertIcon(size) {
+  const S = 3;
+  const buf = Buffer.alloc(size * size * 4);
+  const r = size * 0.235;
+  const th = size * 0.15;
+
+  // 感叹号：竖线 + 下方圆点
+  const barTop = size * 0.24;
+  const barBottom = size * 0.6;
+  const dotY = size * 0.76;
+  const dotR = th * 0.62;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let rs = 0;
+      let gs = 0;
+      let bs = 0;
+      let as = 0;
+
+      for (let sy = 0; sy < S; sy++) {
+        for (let sx = 0; sx < S; sx++) {
+          const px = x + (sx + 0.5) / S;
+          const py = y + (sy + 0.5) / S;
+
+          if (!insideRoundRect(px, py, size, size, r)) continue;
+
+          // 竖向渐变：#F2555A → #B02328
+          const t = py / size;
+          let cr = Math.round(242 + (176 - 242) * t);
+          let cg = Math.round(85 + (35 - 85) * t);
+          let cb = Math.round(90 + (40 - 90) * t);
+
+          const onBar = segDist(px, py, size / 2, barTop, size / 2, barBottom) <= th / 2;
+          const onDot = Math.hypot(px - size / 2, py - dotY) <= dotR;
+          if (onBar || onDot) {
+            cr = 255;
+            cg = 252;
+            cb = 248;
+          }
+
+          rs += cr;
+          gs += cg;
+          bs += cb;
+          as += 255;
+        }
+      }
+
+      const n = S * S;
+      const i = (y * size + x) * 4;
+      if (as === 0) {
+        buf[i] = buf[i + 1] = buf[i + 2] = buf[i + 3] = 0;
+      } else {
+        const cover = as / (255 * n);
+        buf[i] = Math.round(rs / (as / 255));
+        buf[i + 1] = Math.round(gs / (as / 255));
+        buf[i + 2] = Math.round(bs / (as / 255));
+        buf[i + 3] = Math.round(255 * cover);
+      }
+    }
+  }
+  return buf;
+}
+
 /* ---------- 输出 ---------- */
 const root = path.join(__dirname, '..');
 
@@ -155,6 +222,14 @@ function write(file, size, thickness) {
   console.log('generated', file, size + 'px');
 }
 
+function writeAlert(file, size) {
+  const p = path.join(root, file);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, encodePNG(size, size, drawAlertIcon(size)));
+  console.log('generated', file, size + 'px');
+}
+
 write('assets/tray.png', 32, 0.15);
+writeAlert('assets/tray-alert.png', 32);
 write('assets/icon-256.png', 256, 0.115);
 write('build/icon.png', 256, 0.115);

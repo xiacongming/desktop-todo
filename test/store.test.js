@@ -96,6 +96,61 @@ async function run() {
   assert.strictEqual(s6.get().todos[0].text, 'seq29');
   ok('30 次并发写入串行落盘，最终一致');
 
+  console.log('\n[6] v1 数据迁移到 v2');
+  const migrated = normalizeState({
+    version: 1,
+    todos: [
+      {
+        id: 'v1',
+        text: '交房租',
+        dueAt: '2026-10-01T01:00:00.000Z',
+        remindedAt: '2026-10-01T01:00:20.000Z'
+      }
+    ]
+  });
+  assert.strictEqual(migrated.version, 2, '版本应升到 2');
+  assert.strictEqual(migrated.todos[0].firedAt, '2026-10-01T01:00:20.000Z', 'remindedAt 应迁移为 firedAt');
+  assert.strictEqual(migrated.todos[0].repeat, null, '旧数据不应凭空产生重复规则');
+  assert.strictEqual(migrated.todos[0].remindedAt, '2026-10-01T01:00:20.000Z', '旧字段保留，供回退读取');
+  ok('v1 → v2 版本升级、remindedAt 迁移为 firedAt、旧字段保留');
+
+  console.log('\n[7] 重复规则脏数据归一化');
+  const dirty = normalizeState({
+    todos: [
+      { text: 'A', dueAt: '2026-10-01T01:00:00.000Z', repeat: { type: 'yearly' } },
+      { text: 'B', dueAt: '2026-10-01T01:00:00.000Z', repeat: { type: 'interval', intervalMin: 0 } },
+      { text: 'C', dueAt: '2026-10-01T01:00:00.000Z', repeat: { type: 'interval', intervalMin: -30 } },
+      { text: 'D', dueAt: '2026-10-01T01:00:00.000Z', repeat: { type: 'weekly' } },
+      { text: 'E', dueAt: '2026-10-01T01:00:00.000Z', repeat: { type: 'interval', intervalMin: 99999 } },
+      { text: 'F', repeat: { type: 'daily' } }
+    ]
+  });
+  assert.strictEqual(dirty.todos[0].repeat, null, '未知类型应丢弃');
+  assert.strictEqual(dirty.todos[1].repeat, null, '间隔 0 应丢弃');
+  assert.strictEqual(dirty.todos[2].repeat, null, '负间隔应丢弃');
+  assert.deepStrictEqual(dirty.todos[3].repeat, { type: 'daily' }, '缺 weekday 的 weekly 退化为每天');
+  assert.strictEqual(dirty.todos[4].repeat.intervalMin, 1440, '超过一天应截到 1440 分钟');
+  assert.strictEqual(dirty.todos[5].repeat, null, '没有截止时间的规则应丢弃');
+  ok('非法类型丢弃 / 零负间隔丢弃 / weekly 缺 weekday 退化 / 间隔封顶 / 无时间不生效');
+
+  console.log('\n[8] 多行文本往返不丢换行');
+  const multi = new Store(path.join(dir, 'multi'));
+  multi.load();
+  await multi.save({
+    settings: {},
+    todos: [{ id: 'm', text: '账号：admin\n密码：见密码管理器\n端口：8080' }]
+  });
+  const multiReload = new Store(path.join(dir, 'multi'));
+  multiReload.load();
+  assert.strictEqual(
+    multiReload.get().todos[0].text,
+    '账号：admin\n密码：见密码管理器\n端口：8080'
+  );
+  assert.strictEqual(multiReload.get().todos[0].text.split('\n').length, 3, '应仍是 3 行');
+  const longMulti = normalizeState({ todos: [{ text: 'x\n'.repeat(400) }] });
+  assert.ok(longMulti.todos[0].text.length <= 500, '多行文本同样受 500 字上限约束');
+  ok('换行完整保留，且多行文本仍受 500 字上限约束');
+
   fs.rmSync(dir, { recursive: true, force: true });
   console.log(`\n全部通过：${passed} 项\n`);
 }

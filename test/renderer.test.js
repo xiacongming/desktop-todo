@@ -21,13 +21,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function seedState() {
   return {
-    version: 1,
+    version: 2,
     settings: {
       alwaysOnTop: true,
       skin: 'paper',
       autoLaunch: false,
       globalHotkey: true,
       collapseDone: true,
+      composerHeight: null,
       window: { x: null, y: null, width: 340, height: 470 }
     },
     todos: [
@@ -81,6 +82,7 @@ function seedState() {
 
 let saveCount = 0;
 let lastSaved = null;
+let ackCount = 0;
 const handlers = {};
 
 async function boot() {
@@ -94,6 +96,7 @@ async function boot() {
       autostart: false,
       hotkey: 'Control+Alt+T',
       packaged: false,
+      version: '1.1.0',
       dataDir: 'C:/tmp'
     }),
     saveState: (s) => {
@@ -110,8 +113,11 @@ async function boot() {
     notify: async () => {},
     onSkinChanged: (cb) => (handlers.skin = cb),
     onSettingsChanged: (cb) => (handlers.settings = cb),
-    onRemindersMarked: (cb) => (handlers.marked = cb),
-    onRemindersPulse: (cb) => (handlers.pulse = cb)
+    onRemindersFired: (cb) => (handlers.fired = cb),
+    onRemindersPulse: (cb) => (handlers.pulse = cb),
+    ackReminders: () => {
+      ackCount += 1;
+    }
   };
 
   window.eval(script);
@@ -254,6 +260,242 @@ async function run() {
   await sleep(30);
   assert.notStrictEqual(open1, doc.getElementById('doneBlock').classList.contains('open'));
   ok('已完成区可展开 / 收起');
+
+  const press = (elm, key, extra) =>
+    elm.dispatchEvent(
+      new window.KeyboardEvent('keydown', Object.assign({ key, bubbles: true }, extra))
+    );
+  const typeInto = (elm, value) => {
+    elm.value = value;
+    elm.dispatchEvent(new window.Event('input', { bubbles: true }));
+  };
+  const rowById = (id) => doc.querySelector(`.row[data-id="${id}"]`);
+
+  console.log('\n[10] 多行输入');
+  const ta = doc.getElementById('input');
+  assert.strictEqual(ta.tagName, 'TEXTAREA', '新增输入框应为 textarea');
+
+  const before10 = rows(doc).length;
+  typeInto(ta, '第一行');
+  press(ta, 'Enter', { shiftKey: true });
+  await sleep(40);
+  assert.strictEqual(rows(doc).length, before10, 'Shift+Enter 换行，不提交');
+
+  typeInto(ta, '第一行\n第二行');
+  press(ta, 'Enter');
+  await sleep(40);
+  assert.strictEqual(rows(doc).length, before10 + 1, 'Enter 应提交');
+  const multiRow = rows(doc).find((r) => r.textContent.includes('第一行'));
+  assert.ok(multiRow, '多行内容应出现在列表');
+  assert.ok(multiRow.querySelector('.text').textContent.includes('\n'), '换行需保留');
+  assert.ok(multiRow.textContent.includes('第二行'));
+  ok('textarea 承载多行，Shift+Enter 换行、Enter 提交，换行不丢失');
+
+  console.log('\n[11] 列表内直接编辑');
+  const editId = multiRow.dataset.id;
+  click(rowById(editId).querySelector('[data-act="edit"]'));
+  await sleep(40);
+  const ed = doc.querySelector('.edit-input');
+  assert.ok(ed && ed.tagName === 'TEXTAREA', '应出现多行编辑框');
+  assert.strictEqual(rowById(editId).dataset.editing, '1', '行应标记为编辑态');
+  assert.strictEqual(rowById(editId).getAttribute('draggable'), 'false', '编辑态必须禁用拖拽');
+
+  typeInto(ed, '改过的内容\n第二行');
+  press(ed, 'Enter');
+  await sleep(60);
+  assert.ok(!doc.querySelector('.edit-input'), '编辑框应收起');
+  assert.ok(rowById(editId).textContent.includes('改过的内容'), '内容应更新');
+  assert.strictEqual(rowById(editId).dataset.editing, '0');
+  ok('点编辑按钮进入多行编辑，Enter 保存，编辑期间禁用拖拽');
+
+  console.log('\n[12] 长内容折叠 / 展开');
+  const longText = '这是一段很长的待办内容，用来验证折叠与展开逻辑是否可靠。'.repeat(6);
+  typeInto(ta, longText);
+  press(ta, 'Enter');
+  await sleep(60);
+  const longRow = rows(doc).find((r) => r.querySelector('.more'));
+  assert.ok(longRow, '超长内容应出现展开按钮');
+  const longId = longRow.dataset.id;
+  assert.strictEqual(longRow.querySelector('.more').textContent, '展开');
+
+  click(longRow.querySelector('.more'));
+  await sleep(40);
+  assert.ok(rowById(longId).querySelector('.text').classList.contains('expanded'), '点击后应展开');
+  assert.strictEqual(rowById(longId).querySelector('.more').textContent, '收起');
+
+  // 触发一次重渲染，展开状态不能在重画后丢失
+  click(doc.getElementById('doneHead'));
+  await sleep(40);
+  assert.ok(
+    rowById(longId).querySelector('.text').classList.contains('expanded'),
+    '重渲染后仍应保持展开'
+  );
+
+  click(rowById(longId).querySelector('.more'));
+  await sleep(40);
+  assert.ok(!rowById(longId).querySelector('.text').classList.contains('expanded'), '可再次收起');
+  ok('超长内容出现展开入口、可收起、重渲染不丢状态');
+
+  console.log('\n[13] 搜索');
+  click(doc.getElementById('btnSearch'));
+  await sleep(30);
+  assert.ok(!doc.getElementById('searchBar').hidden, '搜索条应展开');
+
+  const si = doc.getElementById('searchInput');
+  typeInto(si, '周报');
+  await sleep(160);
+  assert.strictEqual(rows(doc).length, 1, '“周报”应命中 1 条');
+  assert.ok(rows(doc)[0].querySelector('mark'), '命中词应高亮');
+  assert.strictEqual(doc.getElementById('searchCount').textContent, '1 条');
+  assert.ok(doc.getElementById('doneBlock').hidden, '搜索时收起已完成分区');
+  assert.strictEqual(rows(doc)[0].getAttribute('draggable'), 'false', '搜索态禁止拖拽');
+  ok('搜索过滤 + 命中高亮 + 结果计数 + 搜索态禁拖拽');
+
+  typeInto(si, '周报 张三');
+  await sleep(160);
+  assert.strictEqual(rows(doc).length, 0, '两个词都要命中才算');
+  assert.ok(!doc.getElementById('noResult').hidden, '无结果时显示空状态');
+  typeInto(si, '周报 张工');
+  await sleep(160);
+  assert.strictEqual(rows(doc).length, 1, '“周报 张工”应命中 1 条');
+  ok('多关键词按 AND 匹配，无结果有独立空状态');
+
+  typeInto(si, '报销');
+  await sleep(160);
+  assert.strictEqual(rows(doc).length, 1, '已完成项也应被搜到');
+  assert.ok(rows(doc)[0].classList.contains('done'), '已完成项带 done 标记');
+  ok('已完成项参与搜索并可辨认');
+
+  // 关掉搜索，加一条带 HTML 的内容，验证高亮不会注入 DOM
+  si.focus();
+  press(si, 'Escape');
+  await sleep(60);
+  assert.ok(doc.getElementById('searchBar').hidden, 'Esc 应关闭搜索');
+
+  typeInto(ta, '<img src=x onerror=alert(1)> 密码备忘');
+  press(ta, 'Enter');
+  await sleep(50);
+  click(doc.getElementById('btnSearch'));
+  await sleep(30);
+  typeInto(si, 'img');
+  await sleep(160);
+  const inj = rows(doc)[0];
+  assert.ok(inj.querySelector('mark'), '应高亮命中词');
+  assert.strictEqual(inj.querySelectorAll('img').length, 0, '不得生成真实 img 元素');
+  assert.ok(inj.querySelector('.text').textContent.includes('<img'), '原文按纯文本显示');
+  ok('高亮逐段转义，HTML 内容不会变成 DOM');
+
+  si.focus();
+  press(si, 'Escape');
+  await sleep(60);
+  assert.ok(rows(doc).length >= 4, '关闭搜索后恢复完整列表');
+
+  console.log('\n[14] 重复提醒');
+  const { describeRepeat } = require('../src/main/recurrence');
+  const repId = rows(doc)[0].dataset.id;
+  click(rowById(repId).querySelector('[data-act="due"]'));
+  await sleep(40);
+  assert.ok(!doc.getElementById('duePop').hidden, '提醒浮层应打开');
+
+  click(doc.querySelector('[data-repeat="daily"]'));
+  await sleep(30);
+  assert.ok(!doc.getElementById('duePop').hidden, '选规则不应关闭浮层');
+  assert.ok(doc.getElementById('dueInput').value, '选规则后应自动补一个时间');
+  assert.ok(doc.querySelector('[data-repeat="daily"]').classList.contains('on'));
+
+  click(doc.querySelector('[data-repeat="weekly"]'));
+  await sleep(30);
+  assert.ok(!doc.getElementById('weekChips').hidden, '选“每周”应出现星期选择');
+  click(doc.querySelector('[data-weekday="6"]'));
+  await sleep(30);
+  assert.ok(doc.querySelector('[data-weekday="6"]').classList.contains('on'));
+
+  // 切回每天，再用快捷时间，走完整保存路径
+  click(doc.querySelector('[data-repeat="daily"]'));
+  await sleep(20);
+  click(doc.querySelector('[data-quick="tomorrow"]'));
+  await sleep(20);
+  click(doc.getElementById('dueSave'));
+  await sleep(120);
+  await sleep(300);
+
+  const savedRep = lastSaved.todos.find((t) => t.id === repId);
+  assert.ok(savedRep, '应已落盘');
+  // 注意：渲染层对象产生于 jsdom realm，原型不同，deepStrictEqual 会误判，
+  // 这里逐字段断言。
+  assert.ok(savedRep.repeat, '规则应写入数据');
+  assert.strictEqual(savedRep.repeat.type, 'daily');
+  assert.ok(savedRep.dueAt, '保存后应有截止时间');
+  const repChip = rowById(repId).querySelector('.chip-due');
+  assert.ok(repChip && repChip.classList.contains('rep'), '重复提醒用强调色徽标');
+  assert.strictEqual(
+    repChip.textContent,
+    describeRepeat(savedRep.repeat, savedRep.dueAt),
+    '渲染层文案必须与主进程一致'
+  );
+  ok('重复规则可设可存，徽标文案与主进程 describeRepeat 一致');
+
+  console.log('\n[15] 主进程推进后回写 dueAt');
+  const nextIso = new Date(new Date(savedRep.dueAt).getTime() + 86400000).toISOString();
+  handlers.fired({
+    at: new Date().toISOString(),
+    items: [
+      {
+        id: repId,
+        dueAt: nextIso,
+        repeat: { type: 'daily' },
+        remindedAt: null,
+        firedAt: new Date().toISOString(),
+        skipped: 0
+      }
+    ]
+  });
+  await sleep(60);
+  const updatedChip = rowById(repId).querySelector('.chip-due');
+  assert.strictEqual(
+    updatedChip.textContent,
+    describeRepeat({ type: 'daily' }, nextIso),
+    '界面应显示推进后的下一次时间'
+  );
+  ok('提醒触发后界面同步新的 dueAt，不会停留在旧时间');
+
+  console.log('\n[16] 到点横幅');
+  const alarmTarget = lastSaved.todos.find((t) => !t.done && t.id !== repId);
+  assert.ok(alarmTarget, '需要一条未完成的普通待办');
+  handlers.fired({
+    at: new Date().toISOString(),
+    items: [
+      {
+        id: alarmTarget.id,
+        dueAt: new Date(Date.now() + 86400000).toISOString(),
+        repeat: null,
+        remindedAt: new Date().toISOString(),
+        firedAt: new Date().toISOString(),
+        skipped: 0
+      }
+    ]
+  });
+  await sleep(80);
+  assert.ok(!doc.getElementById('alertBar').hidden, '横幅应出现');
+  assert.ok(
+    /到点/.test(doc.getElementById('alertTitle').textContent),
+    '标题应提示到点'
+  );
+  assert.ok(
+    rowById(alarmTarget.id).classList.contains('alarm'),
+    '对应条目应持续高亮，不能像 pulse 那样 2 秒后自己消失'
+  );
+  ok('到点时出现横幅并持续高亮对应条目');
+
+  click(doc.getElementById('alertAck'));
+  await sleep(60);
+  assert.ok(doc.getElementById('alertBar').hidden, '点「知道了」后横幅应收起');
+  assert.ok(
+    !rowById(alarmTarget.id).classList.contains('alarm'),
+    '高亮应一并解除'
+  );
+  assert.ok(ackCount > 0, '应通知主进程停止托盘闪烁');
+  ok('点「知道了」收起横幅、解除高亮并通知主进程');
 
   console.log(`\n全部通过：${passed} 项\n`);
   process.exit(0);

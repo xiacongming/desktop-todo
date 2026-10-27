@@ -18,12 +18,35 @@
           <span class="badge" id="countBadge">0</span>
         </div>
         <div class="bar-right">
+          <button class="icon-btn" id="btnSearch" title="搜索 (Ctrl+F)"></button>
           <button class="icon-btn" id="btnPin" title="置顶显示" aria-pressed="false"></button>
           <button class="icon-btn" id="btnSkin" title="切换皮肤"></button>
           <button class="icon-btn" id="btnSettings" title="设置"></button>
           <button class="icon-btn" id="btnHide" title="收起到托盘"></button>
         </div>
       </header>
+
+      <div class="alertbar" id="alertBar" hidden>
+        <span class="alert-dot" aria-hidden="true"></span>
+        <div class="alert-body">
+          <div class="alert-title" id="alertTitle"></div>
+          <div class="alert-lines" id="alertLines"></div>
+        </div>
+        <button class="alert-ack" id="alertAck">知道了</button>
+      </div>
+
+      <div class="searchbar" id="searchBar" hidden>
+        <span class="search-ico" id="searchIco"></span>
+        <input
+          id="searchInput"
+          type="text"
+          placeholder="搜索，空格分隔多个关键词"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <span class="search-count" id="searchCount"></span>
+        <button class="icon-btn" id="searchClose" title="关闭搜索 (Esc)"></button>
+      </div>
 
       <div class="banner" id="banner" hidden>
         <span id="bannerText"></span>
@@ -36,6 +59,10 @@
           <div class="empty-title">还没有待办</div>
           <div class="empty-sub">在下方输入框写一句，回车即可</div>
         </div>
+        <div class="empty" id="noResult" hidden>
+          <div class="empty-title">没有匹配的待办</div>
+          <div class="empty-sub">换个词试试，多个关键词用空格分开</div>
+        </div>
         <section class="done-block" id="doneBlock" hidden>
           <button class="done-head" id="doneHead">
             <span class="done-label">已完成 <b id="doneCount">0</b></span>
@@ -45,16 +72,18 @@
         </section>
       </div>
 
-      <footer class="composer">
-        <input
-          id="input"
-          type="text"
-          maxlength="500"
-          placeholder="写点什么…"
-          autocomplete="off"
-          spellcheck="false"
-        />
-        <span class="hint">Enter</span>
+      <footer class="composer" id="composer">
+        <div class="grip" id="grip" title="拖动调整输入框高度，双击切换大小"></div>
+        <div class="composer-inner">
+          <textarea
+            id="input"
+            rows="1"
+            maxlength="500"
+            placeholder="写点什么…"
+            spellcheck="false"
+          ></textarea>
+          <span class="hint">Enter</span>
+        </div>
       </footer>
     </div>
   </div>
@@ -79,20 +108,47 @@
     </label>
     <div class="pop-divider"></div>
     <button class="pop-item" id="btnDataDir">打开数据文件夹</button>
-    <div class="pop-foot" id="verFoot">StickyTodo v1.0.0</div>
+    <div class="pop-foot" id="verFoot">StickyTodo v1.1.0</div>
   </div>
 
-  <!-- 截止时间 -->
+  <!-- 提醒（截止时间 + 重复） -->
   <div class="popover due" id="duePop" hidden>
-    <div class="pop-title">截止时间</div>
+    <div class="pop-title">提醒</div>
     <input type="datetime-local" id="dueInput" />
     <div class="chips">
       <button class="chip" data-quick="today">今天 18:00</button>
       <button class="chip" data-quick="tomorrow">明天 09:00</button>
       <button class="chip" data-quick="nextweek">下周一 09:00</button>
     </div>
+
+    <div class="pop-sub">重复</div>
+    <div class="chips" id="repeatChips">
+      <button class="chip" data-repeat="none">不重复</button>
+      <button class="chip" data-repeat="daily">每天</button>
+      <button class="chip" data-repeat="weekdays">工作日</button>
+      <button class="chip" data-repeat="weekly">每周</button>
+      <button class="chip" data-repeat="interval">间隔</button>
+    </div>
+
+    <div class="chips" id="weekChips" hidden>
+      <button class="chip" data-weekday="1">一</button>
+      <button class="chip" data-weekday="2">二</button>
+      <button class="chip" data-weekday="3">三</button>
+      <button class="chip" data-weekday="4">四</button>
+      <button class="chip" data-weekday="5">五</button>
+      <button class="chip" data-weekday="6">六</button>
+      <button class="chip" data-weekday="7">日</button>
+    </div>
+
+    <div class="chips" id="intervalChips" hidden>
+      <button class="chip" data-interval="15">15 分钟</button>
+      <button class="chip" data-interval="30">30 分钟</button>
+      <button class="chip" data-interval="60">1 小时</button>
+      <button class="chip" data-interval="120">2 小时</button>
+    </div>
+
     <div class="pop-actions">
-      <button class="btn-ghost" id="dueClear">清除</button>
+      <button class="btn-ghost" id="dueClear">关闭提醒</button>
       <button class="btn-primary" id="dueSave">确定</button>
     </div>
   </div>
