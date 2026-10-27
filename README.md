@@ -4,6 +4,17 @@
 
 > 需求与验收标准见 [`docs/需求提示词.md`](docs/需求提示词.md)
 
+## 下载
+
+到 [Releases](https://github.com/xiacongming/desktop-todo/releases/latest) 下载即可，不需要装 Node：
+
+| 文件 | 说明 |
+|---|---|
+| `StickyTodo-Setup-1.0.0.exe` | 安装版，可选安装目录，自动创建桌面快捷方式（推荐） |
+| `StickyTodo-1.0.0.exe` | 免安装版，双击即用 |
+
+> 安装包没有代码签名，首次运行 Windows 会弹 SmartScreen 提示，点「更多信息 → 仍要运行」。
+
 ## 界面
 
 | 纸感米白 | 磨砂深色 |
