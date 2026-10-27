@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'"
+  />
+  <title>StickyTodo</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-skin="paper">
+  <div class="frame">
+    <div class="card">
+      <header class="bar">
+        <div class="bar-left drag">
+          <span class="date" id="dateLabel">—</span>
+          <span class="badge" id="countBadge">0</span>
+        </div>
+        <div class="bar-right">
+          <button class="icon-btn" id="btnPin" title="置顶显示" aria-pressed="false"></button>
+          <button class="icon-btn" id="btnSkin" title="切换皮肤"></button>
+          <button class="icon-btn" id="btnSettings" title="设置"></button>
+          <button class="icon-btn" id="btnHide" title="收起到托盘"></button>
+        </div>
+      </header>
+
+      <div class="banner" id="banner" hidden>
+        <span id="bannerText"></span>
+        <button class="banner-btn" id="bannerBtn">打开数据文件夹</button>
+      </div>
+
+      <div class="scroll" id="scroll">
+        <div class="list" id="list"></div>
+        <div class="empty" id="empty" hidden>
+          <div class="empty-title">还没有待办</div>
+          <div class="empty-sub">在下方输入框写一句，回车即可</div>
+        </div>
+        <section class="done-block" id="doneBlock" hidden>
+          <button class="done-head" id="doneHead">
+            <span class="done-label">已完成 <b id="doneCount">0</b></span>
+            <span class="chev" id="doneChev"></span>
+          </button>
+          <div class="done-list" id="doneList"></div>
+        </section>
+      </div>
+
+      <footer class="composer">
+        <input
+          id="input"
+          type="text"
+          maxlength="500"
+          placeholder="写点什么…"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <span class="hint">Enter</span>
+      </footer>
+    </div>
+  </div>
+
+  <!-- 皮肤选择 -->
+  <div class="popover" id="skinPop" hidden></div>
+
+  <!-- 设置 -->
+  <div class="popover settings" id="setPop" hidden>
+    <div class="pop-title">设置</div>
+    <label class="set-row">
+      <span>置顶显示</span>
+      <button class="switch" id="swTop" role="switch"></button>
+    </label>
+    <label class="set-row">
+      <span>开机自启</span>
+      <button class="switch" id="swAuto" role="switch"></button>
+    </label>
+    <label class="set-row">
+      <span>全局快捷键 <kbd>Ctrl+Alt+T</kbd></span>
+      <button class="switch" id="swHot" role="switch"></button>
+    </label>
+    <div class="pop-divider"></div>
+    <button class="pop-item" id="btnDataDir">打开数据文件夹</button>
+    <div class="pop-foot" id="verFoot">StickyTodo v1.0.0</div>
+  </div>
+
+  <!-- 截止时间 -->
+  <div class="popover due" id="duePop" hidden>
+    <div class="pop-title">截止时间</div>
+    <input type="datetime-local" id="dueInput" />
+    <div class="chips">
+      <button class="chip" data-quick="today">今天 18:00</button>
+      <button class="chip" data-quick="tomorrow">明天 09:00</button>
+      <button class="chip" data-quick="nextweek">下周一 09:00</button>
+    </div>
+    <div class="pop-actions">
+      <button class="btn-ghost" id="dueClear">清除</button>
+      <button class="btn-primary" id="dueSave">确定</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden>
+    <span id="toastText"></span>
+    <button class="toast-act" id="toastAct" hidden></button>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

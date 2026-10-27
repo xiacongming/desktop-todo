@@ -1,0 +1,58 @@
+{
+  "name": "sticky-todo",
+  "productName": "StickyTodo",
+  "version": "1.0.0",
+  "description": "Windows 桌面悬浮待办便签",
+  "main": "src/main/main.js",
+  "author": "qijian",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron .",
+    "icons": "node scripts/gen-icons.js",
+    "test": "node test/store.test.js && node test/renderer.test.js",
+    "pack": "electron-builder --win --dir",
+    "build": "npm run icons && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.qijian.stickytodo",
+    "productName": "StickyTodo",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "StickyTodo"
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "jsdom": "^30.1.3"
+  }
+}
